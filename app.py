@@ -93,7 +93,7 @@ async def chat(request: Request):
 
     try:
         # Runner.run expects exactly: (agent, *messages)
-        run_result = await Runner.run(agent, history_text, tool_input)
+        run_result = await Runner.run(agent, history_text)
 
         # store turns for next round (only text, not tool dict)
         history.append(user_msg)
