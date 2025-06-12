@@ -51,7 +51,14 @@ class Itinerary(BaseModel):
 # -----------------------------------------------------------------------------
 @function_tool
 def choose_options(flights: List[Flight], hotels: List[Hotel]) -> Selection:
-    """LLM task: pick the best flight & hotel IDs (typically the cheapest unless user hints otherwise)."""
+    """Return **only** JSON that matches the Selection schema:
+    {
+      "flight_id": "<id>",
+      "hotel_id": "<id>"
+    }
+    Pick the cheapest flight & hotel unless the user clearly states another preference.
+    Do not include any explanatory text.
+    """
     pass
 
 @function_tool
@@ -84,7 +91,13 @@ async def chat(request: Request):
         sessions[uid] = {
             "selector": Agent(
                 name="Selector",
-                instructions="Choose best flight & hotel IDs (cheapest or per user hints).",
+                instructions=(
+                    "Your task: select the best flight & hotel IDs.
+"
+                    "• Respond with **only** JSON that matches the Selection schema.
+"
+                    "• If user asks to view options, list up to 3 cheapest flights or hotels, otherwise output the JSON."
+                ),
                 tools=[choose_options],
                 model="gpt-4o-mini",
             ),
@@ -115,15 +128,18 @@ async def chat(request: Request):
 
     history.extend([msg, str(sel_result.final_output)])
 
-        # Try to coerce selector output into Selection
+            # --- parse selector output → Selection ---
     try:
         selection = sel_result.final_output_as(Selection)
         if not isinstance(selection, Selection):
-            # final_output_as may return raw value; attempt manual parse
+            # Attempt manual JSON parse if the content is still a string
             selection = Selection(**json.loads(selection)) if isinstance(selection, str) else Selection.model_validate(selection)
     except Exception:
-        logger.warning("Selector output was not a valid Selection; returning early")
+        logger.warning("Selector output was not a valid Selection. Returning early.")
         return JSONResponse(content={
+            "message": str(sel_result.final_output),
+            "itinerary": {}
+        })(content={
             "message": str(sel_result.final_output),
             "itinerary": {}
         })
