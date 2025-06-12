@@ -1,10 +1,11 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from dotenv import load_dotenv
 from agents import Agent, Runner, function_tool
-from pydantic import BaseModel
-import os
-import asyncio
 import logging
+import os
+import uvicorn
 
 # Load env
 load_dotenv()
@@ -44,16 +45,16 @@ agent = Agent(
         "(flights, hotels, and user points). If something is missing, ask the user. Respond clearly and helpfully."
     ),
     tools=[recommend_itinerary],
-    model="gpt-4o-mini"  # You can change this model if needed
+    model="gpt-4o-mini"
 )
 
-# Flask setup
-app = Flask(__name__)
+# FastAPI setup
+app = FastAPI()
 
-@app.route("/chat", methods=["POST"])
-def chat():
+@app.post("/chat")
+async def chat(request: Request):
     try:
-        data = request.get_json()
+        data = await request.json()
         logger.info("Received request: %s", data)
 
         message = data.get("message", "")
@@ -68,19 +69,19 @@ def chat():
         }
 
         logger.info("Running agent with inputs: [%s, %s]", message, tool_input)
-        result = asyncio.run(Runner.run(agent, message, tool_input))
+        result = await Runner.run(agent, message, tool_input)
 
         try:
             itinerary = result.final_output_as(Itinerary)
             logger.info("Agent returned structured itinerary: %s", itinerary)
-            return jsonify(itinerary.dict())
+            return JSONResponse(content=itinerary.dict())
         except Exception as parse_err:
             logger.warning("Failed to parse structured output: %s", parse_err)
-            return jsonify({"response": result.output.content})
+            return JSONResponse(content={"response": result.output.content})
 
     except Exception as e:
         logger.error("Error handling request: %s", e, exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    uvicorn.run(app, host="0.0.0.0", port=5000)
