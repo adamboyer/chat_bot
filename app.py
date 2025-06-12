@@ -122,14 +122,19 @@ async def chat(request: Request):
 
     history.extend([msg, selector_text])
 
-    # Parse Selection safely
+        # ---------------- Parse Selection safely ----------------
     try:
         selection = sel_result.final_output_as(Selection)
     except Exception:
+        # Fallback: strip markdown fences and parse JSON
+        clean = selector_text.strip()
+        if clean.startswith("```"):
+            parts = clean.split("```")
+            clean = "".join(part for part in parts if not part.strip().startswith("json"))
         try:
-            selection = Selection(**json.loads(selector_text))
-        except Exception:
-            logger.warning("Selector did not return valid Selection JSON.")
+            selection = Selection(**json.loads(clean))
+        except Exception as e:
+            logger.warning("Selector did not return valid Selection JSON – %s", e)
             return JSONResponse({"message": selector_text, "itinerary": {}})
 
     # ------------- formatter run -------------
