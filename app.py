@@ -3,8 +3,11 @@ from dotenv import load_dotenv
 import os
 import openai
 
-load_dotenv(override=True)
-openai.api_key = os.getenv("OPENAI_API_KEY")
+from openai import OpenAI
+
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = Flask(__name__)
 
@@ -17,14 +20,14 @@ def chat():
         return jsonify({"error": "Missing 'message' field"}), 400
 
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "user", "content": user_message}
             ]
         )
-        chat_response = response["choices"][0]["message"]["content"]
-        return jsonify({"response": chat_response})
+        reply = response.choices[0].message.content
+        return jsonify({"response": reply})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
