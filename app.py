@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from agents import Agent, Runner, function_tool, ChatSession
+from agents import Agent, Runner, function_tool
 import logging
 import os
 import uvicorn
@@ -51,7 +51,7 @@ def recommend_itinerary(input: ItineraryInput) -> Itinerary:
     pass  # The agent will handle this logic internally
 
 # Store chat sessions keyed by user_id
-sessions: Dict[str, ChatSession] = {}
+sessions: Dict[str, Runner] = {}
 
 # FastAPI setup
 app = FastAPI()
@@ -75,7 +75,7 @@ async def chat(request: Request):
         )
 
         if user_id not in sessions:
-            sessions[user_id] = ChatSession(agent=Agent(
+            agent = Agent(
                 name="Itinerary Assistant",
                 instructions=(
                     "You are a helpful travel planner. Use the `recommend_itinerary` tool when you have enough data "
@@ -83,7 +83,8 @@ async def chat(request: Request):
                 ),
                 tools=[recommend_itinerary],
                 model="gpt-4o-mini"
-            ))
+            )
+            sessions[user_id] = await Runner.create_session(agent)
 
         logger.info("Running agent with input: %s", tool_input)
         result = await sessions[user_id].run(message)
