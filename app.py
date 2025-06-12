@@ -101,7 +101,7 @@ async def chat(request: Request):
     history_text = "\n".join(history + [user_msg]) if history else user_msg
 
     try:
-        run_result = await Runner.run(agent, history_text, tool_input)
+        run_result = await Runner.run(agent, history_text)
         history.extend([user_msg, str(run_result.final_output)])
 
         try:
