@@ -51,15 +51,12 @@ class Itinerary(BaseModel):
 # -----------------------------------------------------------------------------
 @function_tool
 def choose_options(flights: List[Flight], hotels: List[Hotel]) -> Selection:
-    """Return ONLY JSON matching Selection schema:
-    {"flight_id": "<id>", "hotel_id": "<id>"}
-    Pick the cheapest flight & hotel unless user specifies otherwise.
-    """
+    """Return ONLY JSON: {"flight_id": "<id>", "hotel_id": "<id>"}."""
     pass
 
 @function_tool
 def build_itinerary(input: ItineraryInput) -> Itinerary:
-    """Return ONLY JSON for the complete itinerary (Itinerary schema)."""
+    """Return ONLY JSON matching the Itinerary schema."""
     pass
 
 # -----------------------------------------------------------------------------
@@ -79,6 +76,24 @@ async def chat(request: Request):
     hotels_raw  = data.get("hotels",  [])
     points      = data.get("user_points", 0)
 
+    # ---------------- check for missing data BEFORE any LLM calls ----------------
+    missing: List[str] = []
+    if not flights_raw:
+        missing.append("flights list")
+    if not hotels_raw:
+        missing.append("hotels list")
+    if points == 0:
+        missing.append("user_points")
+
+    if missing:
+        ask_msg = (
+            "I still need the following before I can build your itinerary: "
+            + ", ".join(missing)
+            + ". Please provide them."
+        )
+        return JSONResponse({"message": ask_msg, "itinerary": {}})
+
+    # Convert raw → pydantic after we know they exist
     flights = [Flight(**f) for f in flights_raw]
     hotels  = [Hotel(**h) for h in hotels_raw]
 
@@ -87,13 +102,34 @@ async def chat(request: Request):
         sessions[uid] = {
             "selector": Agent(
                 name="Selector",
-                instructions="Return ONLY Selection JSON with cheapest/default IDs.",
+                instructions="""
+You are a travel‑planning assistant.
+
+Step 1️⃣  Read the FLIGHTS_JSON and HOTELS_JSON blocks.
+Step 2️⃣  Ask the user concise follow‑up questions until you know:
+  • preferred departure/arrival cities (or user approves defaults)
+  • preferred dates (or confirms flexibility)
+  • hotel preference (price vs. quality) or confirms "cheapest"
+Step 3️⃣  Once you have enough info, respond with **ONLY** raw JSON that matches the
+Selection schema — *no commentary*.  Example:
+{"flight_id": "F101", "hotel_id": "HNY1"}
+""",
                 tools=[choose_options],
                 model="gpt-4o-mini",
             ),
             "formatter": Agent(
                 name="Formatter",
-                instructions="Use build_itinerary then output ONLY itinerary JSON.",
+                instructions="""
+You receive:
+  • a Selection JSON (flight_id & hotel_id)
+  • FLIGHTS_JSON and HOTELS_JSON
+  • user_points
+
+1️⃣  Locate the chosen flight & hotel objects.
+2️⃣  Calculate total_cost = flight.price + hotel.price_per_night × 3  (assume 3 nights).
+3️⃣  Apply user_points at $0.01/pt; set points_used accordingly.
+4️⃣  Return **ONLY** valid JSON matching the Itinerary schema — no extra text.
+""",
                 tools=[build_itinerary],
                 model="gpt-4o-mini",
             ),
@@ -122,35 +158,29 @@ async def chat(request: Request):
 
     # ---------------- Parse Selection safely ----------------
     def parse_selection(text: str) -> Optional[Selection]:
-        """Strip markdown fences and json‑parse to Selection"""
         clean = text.strip()
         if clean.startswith("```"):
-            # remove ```json and ``` lines
             clean = "\n".join(
                 ln for ln in clean.splitlines()
                 if not ln.strip().startswith("```") and not ln.strip().startswith("json")
             )
         try:
-            data = json.loads(clean)
-            return Selection(**data)
+            return Selection(**json.loads(clean))
         except Exception:
             return None
 
-    # try structured helper first
-    selection: Optional[Selection]
     try:
         tmp = sel_result.final_output_as(Selection)
         selection = tmp if isinstance(tmp, Selection) else None
     except Exception:
         selection = None
 
-    # fallback to text parse
     if not selection:
         selection = parse_selection(selector_text)
 
     if not selection:
-        logger.warning("Selector output not valid after cleaning. Sending assistant text only.")
-        return JSONResponse({"message": selector_text, "itinerary": {}})
+        logger.warning("Selector output not valid. Asking user to clarify.")
+        return JSONResponse({"message": "Could you clarify which flight or hotel you prefer?", "itinerary": {}})
 
     # ------------- formatter run -------------
     fmt_input = ItineraryInput(
@@ -169,10 +199,7 @@ async def chat(request: Request):
     except Exception:
         itinerary = {}
 
-    return JSONResponse({
-        "message": fmt_text,
-        "itinerary": itinerary
-    })
+    return JSONResponse({"message": fmt_text, "itinerary": itinerary})
 
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
