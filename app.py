@@ -51,16 +51,16 @@ class Itinerary(BaseModel):
 # -----------------------------------------------------------------------------
 @function_tool
 def choose_options(flights: List[Flight], hotels: List[Hotel]) -> Selection:
-    """LLM task: pick the cheapest (or user‑preferred) flight & hotel IDs and return them."""
+    """LLM task: pick the best flight & hotel IDs (typically the cheapest unless user hints otherwise)."""
     pass
 
 @function_tool
 def build_itinerary(input: ItineraryInput) -> Itinerary:
-    """LLM task: given chosen IDs + points, calculate cost, points_used, and return full itinerary JSON."""
+    """LLM task: with chosen IDs + reward points, compute cost / points_used and return JSON itinerary."""
     pass
 
 # -----------------------------------------------------------------------------
-# FastAPI + sessions
+# FastAPI + per‑user sessions
 # -----------------------------------------------------------------------------
 app = FastAPI()
 sessions: Dict[str, Dict[str, Any]] = {}
@@ -70,8 +70,8 @@ async def chat(request: Request):
     data = await request.json()
     logger.info("Request: %s", data)
 
-    uid   = data.get("user_id", "default")
-    msg   = data.get("message", "")
+    uid         = data.get("user_id", "default")
+    msg         = data.get("message", "")
     flights_json = data.get("flights", [])
     hotels_json  = data.get("hotels",  [])
     points       = data.get("user_points", 0)
@@ -90,11 +90,11 @@ async def chat(request: Request):
             ),
             "formatter": Agent(
                 name="Formatter",
-                instructions="Given chosen IDs + points, call build_itinerary and output JSON only.",
+                instructions="Given flight+hotel IDs and points, call build_itinerary and output JSON only.",
                 tools=[build_itinerary],
                 model="gpt-4o-mini",
             ),
-            "history": [],  # list[str]
+            "history": []  # List[str]
         }
 
     sel_agent = sessions[uid]["selector"]
@@ -103,9 +103,13 @@ async def chat(request: Request):
 
     # --------------------------- selector step ---------------------------
     sel_conv = "\n".join(history + [msg]) if history else msg
-    logger.info("Selector conversation:\n%s", sel_conv)
+    extra_block = (
+        f"FLIGHTS_JSON: {json.dumps(flights_json)}\n"
+        f"HOTELS_JSON:  {json.dumps(hotels_json)}"
+    )
+    selector_input = "\n".join([sel_conv, extra_block])
+    logger.info("Selector conversation passed to LLM:\n%s", selector_input)
 
-    selector_input = [sel_conv, {"flights": flights_json, "hotels": hotels_json}]
     sel_result = await Runner.run(sel_agent, selector_input)
     logger.info("Selector raw output: %s", sel_result.final_output)
 
