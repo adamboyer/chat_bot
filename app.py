@@ -19,6 +19,8 @@ class Flight(BaseModel):
     id: str
     departure: str
     arrival: str
+    departure_date: str  # ISO‑8601 like "2025-07-01"
+    arrival_date: str    # ISO‑8601 like "2025-07-01"
     price: float
 
 class Hotel(BaseModel):
@@ -44,15 +46,15 @@ class Itinerary(BaseModel):
 @function_tool
 def recommend_itinerary(input: ItineraryInput) -> Itinerary:
     """From the provided flights and hotels:
-    • If the user gave no specific date, treat "pick any date" as **pick the most recent available option**.
-    • Always prefer the **cheapest** flight and hotel that satisfy any user constraints.
-    • Use user_points to offset cost where possible.
+    • If the user gave no specific date, treat "pick any date" as **choose the most recent available flight date**.
+    • If the user has no hotel preference (e.g. "you pick the hotel" or similar), pick the **cheapest hotel**.
+    • Always prefer the **cheapest** flight and hotel that satisfy any explicit user constraints.
+    • Use `user_points` to offset cost where possible.
     Return the chosen itinerary as structured JSON conforming to the `Itinerary` model."""
-    pass
-
+    pass  # Implemented by the LLM
 
 # ----------------------------------------------------------------------------
-# Simple in‑memory sessions {user_id: {agent, history}}
+# In‑memory sessions {user_id: {agent, history}}
 # ----------------------------------------------------------------------------
 sessions: Dict[str, Dict[str, Any]] = {}
 
@@ -75,36 +77,33 @@ async def chat(request: Request):
         user_points=user_points,
     )
 
-    # initialise session
     if user_id not in sessions:
         sessions[user_id] = {
             "agent": Agent(
                 name="Itinerary Assistant",
                 instructions=(
-                    "You are a helpful travel planner. Ask for any missing data (flights, hotels, points). "
-                    "When you have everything, call the `recommend_itinerary` tool to reply in JSON."
+                    "You are a travel‑planning assistant.\n"
+                    "• Ask for any missing data (flights, hotels, points).\n"
+                    "• If the user says you may choose dates, pick the **most recent** flight date.\n"
+                    "• If the user says you may choose the hotel or has no preference, pick the **cheapest** hotel.\n"
+                    "• Always select the cheapest flight that meets constraints.\n"
+                    "• Once you have flights, hotels, and points, call `recommend_itinerary` and respond **only** with the JSON itinerary."
                 ),
                 tools=[recommend_itinerary],
                 model="gpt-4o-mini",
             ),
-            "history": [],  # list[str]
+            "history": [],
         }
 
     agent = sessions[user_id]["agent"]
     history: List[str] = sessions[user_id]["history"]
 
-    # Compose a single text block with prior turns for context
     history_text = "\n".join(history + [user_msg]) if history else user_msg
 
     try:
-        # Runner.run expects exactly: (agent, *messages)
-        run_result = await Runner.run(agent, history_text)
+        run_result = await Runner.run(agent, history_text, tool_input)
+        history.extend([user_msg, str(run_result.final_output)])
 
-        # store turns for next round (only text, not tool dict)
-        history.append(user_msg)
-        history.append(str(run_result.final_output))
-
-        # try structured parse
         try:
             itinerary = run_result.final_output_as(Itinerary)
             return JSONResponse(content=itinerary.dict())
