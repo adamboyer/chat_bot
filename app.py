@@ -14,11 +14,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tripbot")
 
 # ---------------------------------------------------------------------------
-# Pydantic model for the fabricated offer
+# Pydantic model for the fabricated offer (human‑friendly fields)
 # ---------------------------------------------------------------------------
 class Offer(BaseModel):
-    flight_id: str
-    hotel_id: str
+    airline: str
+    flight_number: str
+    departure_time: str  # e.g. "2025‑07‑05T08:00"
+    arrival_time:   str  # e.g. "2025‑07‑05T16:15"
+    hotel_name: str
     total_cost: float
     notes: str
 
@@ -32,17 +35,17 @@ sessions: Dict[str, Dict[str, Any]] = {}
 
 AGENT_PROMPT = (
     "You are **TripBot**, a friendly travel assistant.\n\n"
-    "• If the user message is missing any of the following, ask concise follow‑up questions:\n"
-    "    – departure city\n    – destination city\n    – reward‑points budget\n\n"
-    "• Once you have all three, invent an economical flight (ID `F123`) and hotel (ID `H456`).\n"
-    "  Assume: flight_price = $250, hotel_price_per_night = $100, stay = 3 nights.\n"
-    "  total_cost = $250 + 3·$100 = $550.\n"
-    "  points_used = min(points_budget, total_cost / 0.01).\n\n"
-    "• Respond **only** with JSON — NO markdown fences — using one of the two schemas below.\n\n"
+    "Ask follow‑up questions until you have: departure city, destination city, and reward‑points budget.\n"
+    "When you have all three, invent a realistic cheap flight and hotel, then respond with JSON only (no markdown).\n\n"
+    "Flight details to invent: airline, flight_number, departure_time, arrival_time.\n"
+    "Hotel: hotel_name (no ID).\n"
+    "Assume: flight_price = $250, hotel_price_per_night = $100, stay = 3 nights.\n"
+    "total_cost = 250 + 3*100 = 550.\n"
+    "Use user_points at $0.01/pt toward total_cost; mention points used inside notes if relevant.\n\n"
     "If you still need info →\n"
-    "{\n  \"message\": \"I still need your destination city…\",\n  \"offer\": {}\n}\n\n"
+    "{\n  \"message\": \"I still need your departure city…\",\n  \"offer\": {}\n}\n\n"
     "If you have enough info →\n"
-    "{\n  \"message\": \"Here is your offer!\",\n  \"offer\": {\n    \"flight_id\": \"F123\",\n    \"hotel_id\":  \"H456\",\n    \"total_cost\": 550,\n    \"notes\": \"Includes 3‑night stay\"\n  }\n}"
+    "{\n  \"message\": \"Here is your offer!\",\n  \"offer\": {\n    \"airline\": \"BudgetAir\",\n    \"flight_number\": \"F123\",\n    \"departure_time\": \"2025‑07‑05T08:00\",\n    \"arrival_time\":   \"2025‑07‑05T16:15\",\n    \"hotel_name\":    \"Happy Stay Inn\",\n    \"total_cost\": 550,\n    \"notes\": \"Includes 3‑night stay\"\n  }\n}"
 )
 
 # ---------------------------------------------------------------------------
@@ -58,23 +61,17 @@ async def chat(request: Request):
     if uid not in sessions:
         sessions[uid] = {
             "agent": Agent(name="TripBot", instructions=AGENT_PROMPT, model="gpt-4o-mini"),
-            "history": []  # alternating user / assistant messages
+            "history": []
         }
 
-    agent = sessions[uid]["agent"]
+    agent   = sessions[uid]["agent"]
     history = sessions[uid]["history"]
 
-    # Build conversation text with memory
     conversation = "\n".join(history + [user_msg]) if history else user_msg
-
-    # Call the LLM agent
     result = await Runner.run(agent, conversation)
     assistant_reply = str(result.final_output)
-
-    # Update history
     history.extend([user_msg, assistant_reply])
 
-    # Parse the JSON payload TripBot should have returned
     try:
         payload = json.loads(assistant_reply)
         if "message" not in payload:
