@@ -6,6 +6,7 @@ from agents import Agent, Runner, function_tool
 import logging
 import os
 import uvicorn
+from typing import List, Dict
 
 # Load env
 load_dotenv()
@@ -16,14 +17,14 @@ logger = logging.getLogger(__name__)
 
 # Define input model for function tool
 class ItineraryInput(BaseModel):
-    flights: list
-    hotels: list
+    flights: List[Dict]
+    hotels: List[Dict]
     user_points: int
 
 # Define output model
 class Itinerary(BaseModel):
-    flight: dict
-    hotel: dict
+    flight: Dict
+    hotel: Dict
     total_cost: float
     points_used: int
     notes: str
