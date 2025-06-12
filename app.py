@@ -48,11 +48,14 @@ class Itinerary(BaseModel):
 # -----------------------------------------------------------------------------
 @function_tool
 def recommend_itinerary(input: ItineraryInput) -> Itinerary:
-    """From the provided flights and hotels:
-    • If the user gave no specific date, list the available dates for each flight.
-    • If the user has no hotel preference, pick the **cheapest hotel**.
-    • Always prefer the cheapest valid flight & hotel and use `user_points` to offset cost.
-    Return a JSON itinerary conforming to the `Itinerary` model."""
+    """Planner logic REQUIRED (LLM‑only):
+    1. When dates are flexible, pick the **most‑recent future departure_date** among `input.flights`.
+    2. Always choose the **cheapest flight** that honours user constraints (e.g. cities, date, tickets).
+    3. If the user expresses no strong hotel preference ("you pick", "any hotel", etc.), choose the **lowest night‑rate** hotel.
+    4. Compute `total_cost` = flight.price + hotel.price_per_night × 3 (assume 3 nights unless the user states otherwise).
+    5. Subtract `user_points / 100` dollars (1 point ≈ $0.01) from the total.  Set `points_used` accordingly.
+    6. Return **only** a JSON object matching the `Itinerary` schema – no prose.
+    """ 
     pass
 
 # -----------------------------------------------------------------------------
@@ -84,11 +87,23 @@ async def chat(request: Request):
             "agent": Agent(
                 name="Itinerary Assistant",
                 instructions=(
-                    "You are a travel‑planning assistant.\n"
-                    "• Ask for missing flights/hotels/points.\n"
-                    "• If the user lets you pick dates, choose the most‑recent flight date.\n"
-                    "• If the user has no hotel preference, choose the cheapest hotel.\n"
-                    "• Once everything is available, call `recommend_itinerary` and reply with the JSON only."
+                    "You are **TripBot**, an expert travel‑planning assistant.
+
+"
+                    "Your job is to EFFICIENTLY gather missing info and then output a single JSON itinerary.
+"
+                    "Guidelines:
+"
+                    "• Ask brief clarification questions only if data is missing.
+"
+                    "• If the user lets you choose dates, pick the most‑recent future date.
+"
+                    "• If the user has no hotel preference, pick the cheapest hotel.
+"
+                    "• Always pick the cheapest flight that satisfies departure/arrival cities and chosen date.
+"
+                    "• After you have flights, hotels, and user_points, call `recommend_itinerary` and respond with **only** the JSON (no extra text).
+"
                 ),
                 tools=[recommend_itinerary],
                 model="gpt-4o-mini",
