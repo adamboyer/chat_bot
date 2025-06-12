@@ -20,8 +20,8 @@ class Flight(BaseModel):
     id: str
     departure: str
     arrival: str
-    departure_date: Optional[str] = None  # ISO‑8601 e.g. "2025‑07‑01"
-    arrival_date:   Optional[str] = None  # ISO‑8601 e.g. "2025‑07‑01"
+    departure_date: Optional[str] = None
+    arrival_date:   Optional[str] = None
     price: float
 
 class Hotel(BaseModel):
@@ -29,10 +29,15 @@ class Hotel(BaseModel):
     name: str
     price_per_night: float
 
+class Selection(BaseModel):
+    flight_id: str
+    hotel_id: str
+
 class ItineraryInput(BaseModel):
     flights: List[Flight]
     hotels: List[Hotel]
     user_points: int
+    selection: Selection
 
 class Itinerary(BaseModel):
     flight: Flight
@@ -42,96 +47,89 @@ class Itinerary(BaseModel):
     notes: str
 
 # -----------------------------------------------------------------------------
-# LLM Function‑Tool (the model implements the body)
+# Tools
 # -----------------------------------------------------------------------------
 @function_tool
-def recommend_itinerary(input: ItineraryInput) -> Itinerary:
-    """LLM‑only planning guidelines:
-    1. If dates are flexible, pick the **nearest future** `departure_date`.
-    2. Always choose the **cheapest** flight & hotel satisfying constraints.
-    3. If no hotel preference, default to the lowest nightly rate.
-    4. Assume 3 nights unless user specifies otherwise and compute `total_cost`.
-    5. Offset cost with reward points (1 pt = $0.01) and set `points_used`.
-    6. Return **only** JSON conforming to the `Itinerary` schema.
-    7. If the user simply wants to *see available options* (flights/hotels) without booking, list the top‑5 cheapest items instead of an itinerary.
-    """
+def choose_options(flights: List[Flight], hotels: List[Hotel]) -> Selection:
+    """LLM task: from the lists, pick the cheapest flight and cheapest hotel (or follow user hints) and return their IDs."""
+    pass
+
+@function_tool
+def build_itinerary(input: ItineraryInput) -> Itinerary:
+    """LLM task: using the chosen flight & hotel IDs plus reward points, compute total_cost, points_used, and return a full itinerary JSON."""
     pass
 
 # -----------------------------------------------------------------------------
-# In‑memory chat sessions  { user_id: { agent, history (List[str]) } }
+# In‑memory sessions
 # -----------------------------------------------------------------------------
-sessions: Dict[str, Dict[str, Any]] = {}
 app = FastAPI()
+sessions: Dict[str, Dict[str, Any]] = {}
 
+# -----------------------------------------------------------------------------
+# Endpoint
+# -----------------------------------------------------------------------------
 @app.post("/chat")
 async def chat(request: Request):
     data = await request.json()
     logger.info("Request: %s", data)
 
-    # ---------- Parse user payload ----------
-    user_id   = data.get("user_id", "default")
-    user_msg  = data.get("message", "")
-    flights   = data.get("flights", [])
-    hotels    = data.get("hotels",  [])
-    points    = data.get("user_points", 0)
+    uid  = data.get("user_id", "default")
+    msg  = data.get("message", "")
+    flights_json = data.get("flights", [])
+    hotels_json  = data.get("hotels",  [])
+    points       = data.get("user_points", 0)
 
-    # ---------- Create session on first turn ----------
-    if user_id not in sessions:
-        sessions[user_id] = {
-            "agent": Agent(
-                name="TripBot",
-                instructions=(
-                    "You are **TripBot**, an expert travel planner.\n"
-                    "• If the user wants to view options, list the 5 cheapest flights or hotels from the JSON.\n"
-                    "• Ask only for missing information.\n"
-                    "• If user lets you pick dates, choose the nearest future date.\n"
-                    "• If user has no hotel preference, pick the cheapest hotel.\n"
-                    "• Always choose the cheapest valid flight.\n"
-                    "• Once you have flights, hotels and points, call `recommend_itinerary` and respond **only** with the JSON itinerary."
-                ),
-                tools=[recommend_itinerary],
-                model="gpt-4o-mini",
-            ),
-            "history": []  # List[str]
-        }
+    flights = [Flight(**f) for f in flights_json]
+    hotels  = [Hotel(**h) for h in hotels_json]
 
-    agent   = sessions[user_id]["agent"]
-    history = sessions[user_id]["history"]
+    if uid not in sessions:
+        # Planner agent – picks best IDs
+        selector = Agent(
+            name="Selector",
+            instructions="Choose the best flight & hotel IDs per user criteria or default to cheapest/nearest.",
+            tools=[choose_options],
+            model="gpt-4o-mini"
+        )
+        # Formatter agent – returns full JSON itinerary
+        formatter = Agent(
+            name="Formatter",
+            instructions="Given a chosen flight & hotel and points, call build_itinerary and return only JSON.",
+            tools=[build_itinerary],
+            model="gpt-4o-mini"
+        )
+        sessions[uid] = {"selector": selector, "formatter": formatter, "history": []}
 
-    # ---------- Build conversation string ----------
-    prior_text = "\n".join(history) if history else ""
-    details_block = (
-        f"FLIGHTS_JSON: {json.dumps(flights)}\n"
-        f"HOTELS_JSON:  {json.dumps(hotels)}\n"
-        f"USER_POINTS:  {points}"
-    )
-    conversation = "\n".join(filter(None, [prior_text, user_msg, details_block]))
-    logger.info("Conversation sent to agent:\n%s", conversation)
+    sel_agent = sessions[uid]["selector"]
+    fmt_agent = sessions[uid]["formatter"]
+    history   = sessions[uid]["history"]
 
-    # ---------- Call the agent ----------
+    # ---------- First agent: pick IDs ----------
+    sel_conv = "\n".join(history + [msg]) if history else msg
+    logger.info("Selector conversation:\n%s", sel_conv)
+    sel_result = await Runner.run(sel_agent, sel_conv, flights_json, hotels_json)
+    logger.info("Selector output: %s", sel_result.final_output)
+    history.extend([msg, str(sel_result.final_output)])
+
     try:
-        run_result = await Runner.run(agent, conversation)
-        assistant_reply = str(run_result.final_output)
-        logger.info("LLM raw output: %s", assistant_reply)
+        selection = sel_result.final_output_as(Selection)
+    except Exception:
+        return JSONResponse(content={"message": str(sel_result.final_output), "itinerary": {}})
 
-        # Store turns (text only)
-        history.extend([user_msg, assistant_reply])
+    # ---------- Second agent: build itinerary ----------
+    fmt_input = ItineraryInput(flights=flights, hotels=hotels, user_points=points, selection=selection)
+    fmt_conv  = json.dumps(fmt_input.model_dump())
+    fmt_result = await Runner.run(fmt_agent, fmt_conv)
+    logger.info("Formatter output: %s", fmt_result.final_output)
 
-        # Attempt to parse structured itinerary
-        try:
-            itinerary_dict = run_result.final_output_as(Itinerary).dict()
-        except Exception:
-            itinerary_dict = {}
+    try:
+        itinerary = fmt_result.final_output_as(Itinerary).dict()
+    except Exception:
+        itinerary = {}
 
-        # Unified response: always include message + itinerary (may be empty)
-        return JSONResponse(content={
-            "message": assistant_reply,
-            "itinerary": itinerary_dict
-        })
-
-    except Exception as e:
-        logger.exception("Runner failed: %s", e)
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+    return JSONResponse(content={
+        "message": str(fmt_result.final_output),
+        "itinerary": itinerary
+    })
 
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
