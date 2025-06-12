@@ -126,7 +126,7 @@ async def chat(request: Request):
         return JSONResponse(content={
             "message": str(sel_result.final_output),
             "itinerary": {}
-        }), "itinerary": {}})
+        })
 
     # --------------------------- formatter step ---------------------------
     fmt_input = ItineraryInput(
