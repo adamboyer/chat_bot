@@ -92,10 +92,8 @@ async def chat(request: Request):
             "selector": Agent(
                 name="Selector",
                 instructions=(
-                    "Your task: select the best flight & hotel IDs.
-"
-                    "• Respond with **only** JSON that matches the Selection schema.
-"
+                    "Your task: select the best flight & hotel IDs. "
+                    "• Respond with **only** JSON that matches the Selection schema."
                     "• If user asks to view options, list up to 3 cheapest flights or hotels, otherwise output the JSON."
                 ),
                 tools=[choose_options],
