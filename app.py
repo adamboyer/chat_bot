@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from agents import Agent, Runner
 import logging, json, uvicorn
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 # ---------------------------------------------------------------------------
 # ENV & LOGGING
@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tripbot")
 
 # ---------------------------------------------------------------------------
-# Minimal data model for an offer
+# Pydantic model for the fabricated offer
 # ---------------------------------------------------------------------------
 class Offer(BaseModel):
     flight_id: str
@@ -27,34 +27,23 @@ class Offer(BaseModel):
 # ---------------------------------------------------------------------------
 app = FastAPI()
 
-# One lightweight agent per session
-sessions: Dict[str, Agent] = {}
+# Per‑user session memory: stores an agent plus chat history
+sessions: Dict[str, Dict[str, Any]] = {}
 
-AGENT_PROMPT = """
-You are TripBot, a friendly travel assistant.
-
-• If the user message doesn’t give a **destination city**, **departure city**, or **points budget**, ask concise questions to obtain the missing piece(s).
-• When you have enough info (departure + destination + points), invent a cheap flight (id F123) and hotel (id H456) and calculate:
-    total_cost = flight_price ($250) + hotel_price_per_night ($100) * 3 nights = $550
-    points_used = min(points_budget, total_cost / 0.01)
-    out_of_pocket = total_cost – points_used*0.01
-• Respond with **ONLY** a JSON payload like:
-{
-  "message": "Here is your offer!",
-  "offer": {
-    "flight_id": "F123",
-    "hotel_id": "H456",
-    "total_cost": 550,
-    "notes": "Includes 3‑night stay"
-  }
-}
-If you still need data, respond with:
-{
-  "message": "I still need your points budget…",
-  "offer": {}
-}
-No additional keys, no markdown fences.
-"""
+AGENT_PROMPT = (
+    "You are **TripBot**, a friendly travel assistant.\n\n"
+    "• If the user message is missing any of the following, ask concise follow‑up questions:\n"
+    "    – departure city\n    – destination city\n    – reward‑points budget\n\n"
+    "• Once you have all three, invent an economical flight (ID `F123`) and hotel (ID `H456`).\n"
+    "  Assume: flight_price = $250, hotel_price_per_night = $100, stay = 3 nights.\n"
+    "  total_cost = $250 + 3·$100 = $550.\n"
+    "  points_used = min(points_budget, total_cost / 0.01).\n\n"
+    "• Respond **only** with JSON — NO markdown fences — using one of the two schemas below.\n\n"
+    "If you still need info →\n"
+    "{\n  \"message\": \"I still need your destination city…\",\n  \"offer\": {}\n}\n\n"
+    "If you have enough info →\n"
+    "{\n  \"message\": \"Here is your offer!\",\n  \"offer\": {\n    \"flight_id\": \"F123\",\n    \"hotel_id\":  \"H456\",\n    \"total_cost\": 550,\n    \"notes\": \"Includes 3‑night stay\"\n  }\n}"
+)
 
 # ---------------------------------------------------------------------------
 # /chat endpoint
@@ -62,27 +51,39 @@ No additional keys, no markdown fences.
 @app.post("/chat")
 async def chat(request: Request):
     data = await request.json()
-    uid  = data.get("user_id", "guest")
-    msg  = data.get("message", "")
+    uid = data.get("user_id", "guest")
+    user_msg = data.get("message", "")
 
+    # Initialise session
     if uid not in sessions:
-        sessions[uid] = Agent(name="TripBot", instructions=AGENT_PROMPT, model="gpt-4o-mini")
+        sessions[uid] = {
+            "agent": Agent(name="TripBot", instructions=AGENT_PROMPT, model="gpt-4o-mini"),
+            "history": []  # alternating user / assistant messages
+        }
 
-    agent = sessions[uid]
-    result = await Runner.run(agent, msg)
+    agent = sessions[uid]["agent"]
+    history = sessions[uid]["history"]
 
-    # The agent has been instructed to always return valid JSON
+    # Build conversation text with memory
+    conversation = "\n".join(history + [user_msg]) if history else user_msg
+
+    # Call the LLM agent
+    result = await Runner.run(agent, conversation)
+    assistant_reply = str(result.final_output)
+
+    # Update history
+    history.extend([user_msg, assistant_reply])
+
+    # Parse the JSON payload TripBot should have returned
     try:
-        payload = json.loads(str(result.final_output))
-    except Exception as e:
-        logger.warning("Agent returned non‑JSON: %s", e)
-        payload = {"message": str(result.final_output), "offer": {}}
-
-    # ensure both keys exist
-    if "offer" not in payload:
-        payload["offer"] = {}
-    if "message" not in payload:
-        payload["message"] = str(result.final_output)
+        payload = json.loads(assistant_reply)
+        if "message" not in payload:
+            raise ValueError("missing message key")
+        if "offer" not in payload:
+            payload["offer"] = {}
+    except Exception as err:
+        logger.warning("Non‑JSON assistant reply: %s", err)
+        payload = {"message": assistant_reply, "offer": {}}
 
     return JSONResponse(payload)
 
