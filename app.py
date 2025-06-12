@@ -122,20 +122,29 @@ async def chat(request: Request):
 
     history.extend([msg, selector_text])
 
-        # ---------------- Parse Selection safely ----------------
-    try:
-        selection = sel_result.final_output_as(Selection)
-    except Exception:
-        # Fallback: strip markdown fences and parse JSON
-        clean = selector_text.strip()
-        if clean.startswith("```"):
-            parts = clean.split("```")
-            clean = "".join(part for part in parts if not part.strip().startswith("json"))
+    # ---------------- Parse Selection safely ----------------
+    def _parse_selection(text: str) -> Optional[Selection]:
+        """Try multiple strategies to coerce raw LLM text → Selection"""
+        raw = text.strip()
+        # remove markdown fences
+        if raw.startswith("```"):
+            raw = "".join(
+                line for line in raw.splitlines()
+                if not line.strip().startswith("```") and not line.strip().startswith("json")
+            )
         try:
-            selection = Selection(**json.loads(clean))
-        except Exception as e:
-            logger.warning("Selector did not return valid Selection JSON – %s", e)
-            return JSONResponse({"message": selector_text, "itinerary": {}})
+            data = json.loads(raw)
+            return Selection(**data)
+        except Exception:
+            return None
+
+    selection = sel_result.final_output_as(Selection, default=None)
+    if not isinstance(selection, Selection):
+        selection = _parse_selection(selector_text)
+
+    if not selection:
+        logger.warning("Selector output still not valid after cleaning.")
+        return JSONResponse({"message": selector_text, "itinerary": {}})
 
     # ------------- formatter run -------------
     fmt_input = ItineraryInput(flights=flights, hotels=hotels, user_points=points, selection=selection)
