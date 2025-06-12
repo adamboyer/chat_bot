@@ -135,13 +135,17 @@ async def chat(request: Request):
         except Exception:
             return None
 
+        # -- attempt direct structured parse --
+    selection: Optional[Selection]
     try:
-        selection = sel_result.final_output_as(Selection)
+        raw_sel = sel_result.final_output_as(Selection)
+        selection = raw_sel if isinstance(raw_sel, Selection) else None
     except Exception:
         selection = None
 
+    # -- fallback: strip markdown/code fences & json‑parse --
     if not selection:
-        selection = parse_selection(selector_text)
+        selection = parse_selection(selector_text)(selector_text)
 
     if not selection:
         logger.warning("Selector output not valid after cleaning. Sending assistant text only.")
