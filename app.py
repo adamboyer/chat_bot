@@ -1,12 +1,12 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from agents import Agent, Runner, function_tool
 import logging
 import os
 import uvicorn
-from typing import List, Dict
+from typing import List
 
 # Load env
 load_dotenv()
@@ -15,16 +15,28 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Define structured item models
+class Flight(BaseModel):
+    id: str
+    departure: str
+    arrival: str
+    price: float
+
+class Hotel(BaseModel):
+    id: str
+    name: str
+    price_per_night: float
+
 # Define input model for function tool
 class ItineraryInput(BaseModel):
-    flights: List[Dict]
-    hotels: List[Dict]
+    flights: List[Flight]
+    hotels: List[Hotel]
     user_points: int
 
 # Define output model
 class Itinerary(BaseModel):
-    flight: Dict
-    hotel: Dict
+    flight: Flight
+    hotel: Hotel
     total_cost: float
     points_used: int
     notes: str
@@ -64,8 +76,8 @@ async def chat(request: Request):
         user_points = data.get("user_points", 0)
 
         tool_input = ItineraryInput(
-            flights=flights,
-            hotels=hotels,
+            flights=[Flight(**f) for f in flights],
+            hotels=[Hotel(**h) for h in hotels],
             user_points=user_points
         )
 
