@@ -43,8 +43,13 @@ class Itinerary(BaseModel):
 # ----------------------------------------------------------------------------
 @function_tool
 def recommend_itinerary(input: ItineraryInput) -> Itinerary:
-    """Select the best flight/hotel based on price & points and return an itinerary."""
+    """From the provided flights and hotels:
+    • If the user gave no specific date, treat "pick any date" as **pick the most recent available option**.
+    • Always prefer the **cheapest** flight and hotel that satisfy any user constraints.
+    • Use user_points to offset cost where possible.
+    Return the chosen itinerary as structured JSON conforming to the `Itinerary` model."""
     pass
+
 
 # ----------------------------------------------------------------------------
 # Simple in‑memory sessions {user_id: {agent, history}}
