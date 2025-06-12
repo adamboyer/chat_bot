@@ -8,16 +8,13 @@ import os
 import uvicorn
 from typing import List, Dict, Any
 
-# ------------------------------------------------------------------
-# ENV & LOGGING
-# ------------------------------------------------------------------
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ------------------------------------------------------------------
-# Pydantic models for strict schemas
-# ------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Pydantic models
+# ----------------------------------------------------------------------------
 class Flight(BaseModel):
     id: str
     departure: str
@@ -41,47 +38,42 @@ class Itinerary(BaseModel):
     points_used: int
     notes: str
 
-# ------------------------------------------------------------------
-# Tool definition – LLM fills the body
-# ------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Tool – LLM fills body
+# ----------------------------------------------------------------------------
 @function_tool
 def recommend_itinerary(input: ItineraryInput) -> Itinerary:
     """Select the best flight/hotel based on price & points and return an itinerary."""
-    pass  # LLM will implement
+    pass
 
-# ------------------------------------------------------------------
-# Server‑side conversation memory (very simple)
-# user_id -> {"agent": Agent, "history": List[Any] }
-# ------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Simple in‑memory sessions {user_id: {agent, history}}
+# ----------------------------------------------------------------------------
 sessions: Dict[str, Dict[str, Any]] = {}
 
-# ------------------------------------------------------------------
-# FastAPI app
-# ------------------------------------------------------------------
 app = FastAPI()
 
 @app.post("/chat")
 async def chat(request: Request):
-    try:
-        data = await request.json()
-        logger.info("Received request: %s", data)
+    data = await request.json()
+    logger.info("Received request: %s", data)
 
-        user_id: str = data.get("user_id", "default")
-        user_message: str = data.get("message", "")
-        flights = data.get("flights", [])
-        hotels = data.get("hotels", [])
-        user_points = data.get("user_points", 0)
+    user_id = data.get("user_id", "default")
+    user_msg = data.get("message", "")
+    flights = data.get("flights", [])
+    hotels = data.get("hotels", [])
+    user_points = data.get("user_points", 0)
 
-        # Convert raw lists to Pydantic objects
-        tool_input = ItineraryInput(
-            flights=[Flight(**f) for f in flights],
-            hotels=[Hotel(**h) for h in hotels],
-            user_points=user_points,
-        )
+    tool_input = ItineraryInput(
+        flights=[Flight(**f) for f in flights],
+        hotels=[Hotel(**h) for h in hotels],
+        user_points=user_points,
+    )
 
-        # Initialise session if first turn
-        if user_id not in sessions:
-            agent = Agent(
+    # initialise session
+    if user_id not in sessions:
+        sessions[user_id] = {
+            "agent": Agent(
                 name="Itinerary Assistant",
                 instructions=(
                     "You are a helpful travel planner. Ask for any missing data (flights, hotels, points). "
@@ -89,35 +81,34 @@ async def chat(request: Request):
                 ),
                 tools=[recommend_itinerary],
                 model="gpt-4o-mini",
-            )
-            sessions[user_id] = {"agent": agent, "history": []}
+            ),
+            "history": [],  # list[str]
+        }
 
-        session = sessions[user_id]
-        history: List[Any] = session["history"]
-        agent: Agent = session["agent"]
+    agent = sessions[user_id]["agent"]
+    history: List[str] = sessions[user_id]["history"]
 
-        # Build the full conversation to preserve context
-        full_inputs = history + [user_message, tool_input]
+    # Compose a single text block with prior turns for context
+    history_text = "\n".join(history + [user_msg]) if history else user_msg
 
-        logger.info("Calling Runner.run with %d messages", len(full_inputs))
-        run_result = await Runner.run(agent, *full_inputs)
+    try:
+        # Runner.run expects exactly: (agent, *messages)
+        run_result = await Runner.run(agent, history_text, tool_input)
 
-        # Save user_msg and assistant reply for next turn
-        history.extend([user_message, run_result.final_output])
+        # store turns for next round (only text, not tool dict)
+        history.append(user_msg)
+        history.append(str(run_result.final_output))
 
-        # Attempt to parse structured output
+        # try structured parse
         try:
             itinerary = run_result.final_output_as(Itinerary)
             return JSONResponse(content=itinerary.dict())
         except Exception:
             return JSONResponse(content={"response": str(run_result.final_output)})
 
-    except Exception as err:
-        logger.exception("Unhandled error")
-        return JSONResponse(content={"error": str(err)}, status_code=500)
+    except Exception as e:
+        logger.exception("Runner failed")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
-# ------------------------------------------------------------------
-# Entrypoint
-# ------------------------------------------------------------------
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=5000)
