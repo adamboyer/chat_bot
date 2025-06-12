@@ -51,15 +51,15 @@ class Itinerary(BaseModel):
 # -----------------------------------------------------------------------------
 @function_tool
 def choose_options(flights: List[Flight], hotels: List[Hotel]) -> Selection:
-    """Return JSON:
+    """Return ONLY JSON matching Selection schema:
     {"flight_id": "<id>", "hotel_id": "<id>"}
-    Pick the cheapest flight & hotel (unless user hints otherwise). Output **only** the JSON.
+    Pick the cheapest flight & hotel unless user specifies otherwise.
     """
     pass
 
 @function_tool
 def build_itinerary(input: ItineraryInput) -> Itinerary:
-    """Given chosen IDs + points, compute cost, points_used, and return an Itinerary JSON."""
+    """Return ONLY JSON for the complete itinerary (Itinerary schema)."""
     pass
 
 # -----------------------------------------------------------------------------
@@ -73,8 +73,8 @@ async def chat(request: Request):
     data = await request.json()
     logger.info("Request: %s", data)
 
-    uid   = data.get("user_id", "default")
-    msg   = data.get("message", "")
+    uid         = data.get("user_id", "default")
+    user_msg    = data.get("message", "")
     flights_raw = data.get("flights", [])
     hotels_raw  = data.get("hotels",  [])
     points      = data.get("user_points", 0)
@@ -88,15 +88,14 @@ async def chat(request: Request):
             "selector": Agent(
                 name="Selector",
                 instructions=(
-                    "Pick best flight & hotel IDs (cheapest/default).\n"
-                    "Respond with JSON matching Selection schema only."
+                    "Return ONLY Selection JSON with cheapest/default IDs."
                 ),
                 tools=[choose_options],
                 model="gpt-4o-mini",
             ),
             "formatter": Agent(
                 name="Formatter",
-                instructions="Use build_itinerary to return JSON itinerary only.",
+                instructions="Use build_itinerary then output ONLY itinerary JSON.",
                 tools=[build_itinerary],
                 model="gpt-4o-mini",
             ),
@@ -108,46 +107,53 @@ async def chat(request: Request):
     history   = sessions[uid]["history"]
 
     # ------------- selector run -------------
-    sel_conv = "\n".join(history + [msg]) if history else msg
+    sel_conv = "\n".join(history + [user_msg]) if history else user_msg
     extra_block = (
         f"FLIGHTS_JSON: {json.dumps(flights_raw)}\n"
         f"HOTELS_JSON:  {json.dumps(hotels_raw)}"
     )
-    selector_input = "\n".join([sel_conv, extra_block])
+    selector_input = f"{sel_conv}\n{extra_block}"
     logger.info("Selector input→\n%s", selector_input)
 
     sel_result = await Runner.run(sel_agent, selector_input)
     selector_text = str(sel_result.final_output)
     logger.info("Selector output: %s", selector_text)
 
-    history.extend([msg, selector_text])
+    # store conversation text
+    history.extend([user_msg, selector_text])
 
     # ---------------- Parse Selection safely ----------------
-    def _parse_selection(text: str) -> Optional[Selection]:
-        """Try multiple strategies to coerce raw LLM text → Selection"""
-        raw = text.strip()
-        # remove markdown fences
-        if raw.startswith("```"):
-            raw = "".join(
-                line for line in raw.splitlines()
+    def parse_selection(text: str) -> Optional[Selection]:
+        clean = text.strip()
+        if clean.startswith("```"):
+            clean = "\n".join(
+                line for line in clean.splitlines()
                 if not line.strip().startswith("```") and not line.strip().startswith("json")
             )
         try:
-            data = json.loads(raw)
-            return Selection(**data)
+            return Selection(**json.loads(clean))
         except Exception:
             return None
 
-    selection = sel_result.final_output_as(Selection, default=None)
-    if not isinstance(selection, Selection):
-        selection = _parse_selection(selector_text)
+    try:
+        selection = sel_result.final_output_as(Selection)
+    except Exception:
+        selection = None
 
     if not selection:
-        logger.warning("Selector output still not valid after cleaning.")
+        selection = parse_selection(selector_text)
+
+    if not selection:
+        logger.warning("Selector output not valid after cleaning. Sending assistant text only.")
         return JSONResponse({"message": selector_text, "itinerary": {}})
 
     # ------------- formatter run -------------
-    fmt_input = ItineraryInput(flights=flights, hotels=hotels, user_points=points, selection=selection)
+    fmt_input = ItineraryInput(
+        flights=flights,
+        hotels=hotels,
+        user_points=points,
+        selection=selection,
+    )
     fmt_conv = json.dumps(fmt_input.model_dump())
     fmt_result = await Runner.run(fmt_agent, fmt_conv)
     fmt_text = str(fmt_result.final_output)
