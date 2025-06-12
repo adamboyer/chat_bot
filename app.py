@@ -42,7 +42,7 @@ class Itinerary(BaseModel):
     notes: str
 
 # -----------------------------------------------------------------------------
-# LLM function‑tool (body filled by the model)
+# LLM Function‑Tool (the model implements the body)
 # -----------------------------------------------------------------------------
 @function_tool
 def recommend_itinerary(input: ItineraryInput) -> Itinerary:
@@ -52,12 +52,13 @@ def recommend_itinerary(input: ItineraryInput) -> Itinerary:
     3. If no hotel preference, default to the lowest nightly rate.
     4. Assume 3 nights unless user specifies otherwise and compute `total_cost`.
     5. Offset cost with reward points (1 pt = $0.01) and set `points_used`.
-    6. Return **only** JSON that fits the `Itinerary` schema.
+    6. Return **only** JSON conforming to the `Itinerary` schema.
+    7. If the user simply wants to *see available options* (flights/hotels) without booking, list the top‑5 cheapest items instead of an itinerary.
     """
     pass
 
 # -----------------------------------------------------------------------------
-# In‑memory chat sessions: { user_id: {agent, history (List[str])} }
+# In‑memory chat sessions  { user_id: { agent, history (List[str]) } }
 # -----------------------------------------------------------------------------
 sessions: Dict[str, Dict[str, Any]] = {}
 app = FastAPI()
@@ -67,36 +68,37 @@ async def chat(request: Request):
     data = await request.json()
     logger.info("Request: %s", data)
 
-    # ------------------- extract user payload -------------------
-    user_id  = data.get("user_id", "default")
-    user_msg = data.get("message", "")
-    flights  = data.get("flights", [])
-    hotels   = data.get("hotels",  [])
-    points   = data.get("user_points", 0)
+    # ---------- Parse user payload ----------
+    user_id   = data.get("user_id", "default")
+    user_msg  = data.get("message", "")
+    flights   = data.get("flights", [])
+    hotels    = data.get("hotels",  [])
+    points    = data.get("user_points", 0)
 
-    # ------------------- initialise session -------------------
+    # ---------- Create session on first turn ----------
     if user_id not in sessions:
         sessions[user_id] = {
             "agent": Agent(
                 name="TripBot",
                 instructions=(
                     "You are **TripBot**, an expert travel planner.\n"
-                    "• Ask only for missing info.\n"
+                    "• If the user wants to view options, list the 5 cheapest flights or hotels from the JSON.\n"
+                    "• Ask only for missing information.\n"
                     "• If user lets you pick dates, choose the nearest future date.\n"
                     "• If user has no hotel preference, pick the cheapest hotel.\n"
                     "• Always choose the cheapest valid flight.\n"
-                    "• Once you have flights, hotels and points, call `recommend_itinerary` and reply **only** with JSON."
+                    "• Once you have flights, hotels and points, call `recommend_itinerary` and respond **only** with the JSON itinerary."
                 ),
                 tools=[recommend_itinerary],
                 model="gpt-4o-mini",
             ),
-            "history": [],  # list[str]
+            "history": []  # List[str]
         }
 
     agent   = sessions[user_id]["agent"]
-    history = sessions[user_id]["history"]  # List[str]
+    history = sessions[user_id]["history"]
 
-    # ------------------- build conversation string -------------------
+    # ---------- Build conversation string ----------
     prior_text = "\n".join(history) if history else ""
     details_block = (
         f"FLIGHTS_JSON: {json.dumps(flights)}\n"
@@ -106,23 +108,29 @@ async def chat(request: Request):
     conversation = "\n".join(filter(None, [prior_text, user_msg, details_block]))
     logger.info("Conversation sent to agent:\n%s", conversation)
 
-    # ------------------- call the agent -------------------
+    # ---------- Call the agent ----------
     try:
         run_result = await Runner.run(agent, conversation)
-        logger.info("LLM raw output: %s", run_result.final_output)
+        assistant_reply = str(run_result.final_output)
+        logger.info("LLM raw output: %s", assistant_reply)
 
-        # store turns
-        history.extend([user_msg, str(run_result.final_output)])
+        # Store turns (text only)
+        history.extend([user_msg, assistant_reply])
 
-        # try structured parse
+        # Attempt to parse structured itinerary
         try:
-            itinerary = run_result.final_output_as(Itinerary)
-            return JSONResponse(content=itinerary.dict())
+            itinerary_dict = run_result.final_output_as(Itinerary).dict()
         except Exception:
-            return JSONResponse(content={"response": str(run_result.final_output)})
+            itinerary_dict = {}
+
+        # Unified response: always include message + itinerary (may be empty)
+        return JSONResponse(content={
+            "message": assistant_reply,
+            "itinerary": itinerary_dict
+        })
 
     except Exception as e:
-        logger.exception("Runner failed")
+        logger.exception("Runner failed: %s", e)
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 # -----------------------------------------------------------------------------
