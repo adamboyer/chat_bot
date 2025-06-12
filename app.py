@@ -1,13 +1,11 @@
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
-from openai import OpenAI
 from agents import Agent, Runner, function_tool
 from pydantic import BaseModel
 import os
 
-# Load .env
+# Load env
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Define output model
 class Itinerary(BaseModel):
@@ -17,37 +15,39 @@ class Itinerary(BaseModel):
     points_used: int
     notes: str
 
-# Define tool for agent
+# Define function tool (agent will use this)
 @function_tool
 def recommend_itinerary(flights: list, hotels: list, user_points: int) -> Itinerary:
     """
-    Use this tool to select the best flight and hotel based on price and points.
-    Return the complete itinerary in JSON format.
+    Choose the best flight and hotel based on price and user points.
+    Return a full itinerary in structured JSON.
     """
-    pass  # LLM will handle logic
+    pass  # The agent will handle this logic internally
 
-# Create agent
-agent = Agent.tools([recommend_itinerary]).with_instructions("""
-You are a travel planner. Collect flights, hotels, and user points from the user,
-and when you have all three, use the tool to create the best itinerary based on value.
-""")
+# Build the agent
+agent = Agent(
+    name="Itinerary Assistant",
+    instructions=(
+        "You are a helpful travel planner. Use the `recommend_itinerary` tool when you have enough data "
+        "(flights, hotels, and user points). If something is missing, ask the user. Respond clearly and helpfully."
+    ),
+    tools=[recommend_itinerary],
+    model="gpt-4o-mini"  # You can change this model if needed
+)
 
-# Flask app
+# Flask setup
 app = Flask(__name__)
 
 @app.route("/chat", methods=["POST"])
 def chat():
     try:
-        data = request.json
+        data = request.get_json()
         message = data.get("message", "")
         flights = data.get("flights", [])
         hotels = data.get("hotels", [])
         user_points = data.get("user_points", 0)
 
-        # Compose input message list for the agent
         inputs = [message]
-
-        # If structured data exists, pass as input to tool
         if flights or hotels or user_points:
             inputs.append({
                 "flights": flights,
@@ -55,15 +55,14 @@ def chat():
                 "user_points": user_points
             })
 
-        # Run the agent using Runner (synchronous version)
+        # Run the agent using Runner (sync)
         result = Runner.run(agent, *inputs)
 
-        # If tool was called, extract structured output
         try:
+            # Try to parse structured output
             itinerary = result.final_output_as(Itinerary)
             return jsonify(itinerary.dict())
         except Exception:
-            # No tool used, fallback to LLM message
             return jsonify({"response": result.output.content})
 
     except Exception as e:
