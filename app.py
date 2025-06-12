@@ -4,9 +4,14 @@ from agents import Agent, Runner, function_tool
 from pydantic import BaseModel
 import os
 import asyncio
+import logging
 
 # Load env
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Define output model
 class Itinerary(BaseModel):
@@ -43,6 +48,8 @@ app = Flask(__name__)
 def chat():
     try:
         data = request.get_json()
+        logger.info("Received request: %s", data)
+
         message = data.get("message", "")
         flights = data.get("flights", [])
         hotels = data.get("hotels", [])
@@ -56,17 +63,19 @@ def chat():
                 "user_points": user_points
             })
 
-        # Run the agent using Runner (sync via asyncio)
+        logger.info("Running agent with inputs: %s", inputs)
         result = asyncio.run(Runner.run(agent, *inputs))
 
         try:
-            # Try to parse structured output
             itinerary = result.final_output_as(Itinerary)
+            logger.info("Agent returned structured itinerary: %s", itinerary)
             return jsonify(itinerary.dict())
-        except Exception:
+        except Exception as parse_err:
+            logger.warning("Failed to parse structured output: %s", parse_err)
             return jsonify({"response": result.output.content})
 
     except Exception as e:
+        logger.error("Error handling request: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
