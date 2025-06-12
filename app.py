@@ -23,7 +23,7 @@ class Itinerary(BaseModel):
 
 # Define function tool (agent will use this)
 @function_tool
-def recommend_itinerary(flights: list, hotels: list, user_points: int) -> Itinerary:
+def recommend_itinerary(input: dict) -> Itinerary:
     """
     Choose the best flight and hotel based on price and user points.
     Return a full itinerary in structured JSON.
@@ -55,16 +55,14 @@ def chat():
         hotels = data.get("hotels", [])
         user_points = data.get("user_points", 0)
 
-        inputs = [message]
-        if flights or hotels or user_points:
-            inputs.append({
-                "flights": flights,
-                "hotels": hotels,
-                "user_points": user_points
-            })
+        tool_input = {
+            "flights": flights,
+            "hotels": hotels,
+            "user_points": user_points
+        }
 
-        logger.info("Running agent with inputs: %s", inputs)
-        result = asyncio.run(Runner.run(agent, *inputs))
+        logger.info("Running agent with inputs: [%s, %s]", message, tool_input)
+        result = asyncio.run(Runner.run(agent, message, tool_input))
 
         try:
             itinerary = result.final_output_as(Itinerary)
