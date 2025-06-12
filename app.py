@@ -49,7 +49,7 @@ class Itinerary(BaseModel):
 @function_tool
 def recommend_itinerary(input: ItineraryInput) -> Itinerary:
     """From the provided flights and hotels:
-    • If the user gave no specific date, treat "pick any date" as **choose the most recent available flight date**.
+    • If the user gave no specific date, list the available dates for each flight.
     • If the user has no hotel preference, pick the **cheapest hotel**.
     • Always prefer the cheapest valid flight & hotel and use `user_points` to offset cost.
     Return a JSON itinerary conforming to the `Itinerary` model."""
