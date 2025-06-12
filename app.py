@@ -103,7 +103,7 @@ async def chat(request: Request):
     try:
         run_result = await Runner.run(agent, history_text)
         logger.info("Raw run_result.final_output: %s", run_result.final_output)
-        history.extend([user_msg, str(run_result.final_output)])[user_msg, str(run_result.final_output)])
+        history.extend([user_msg, str(run_result.final_output)])
 
         try:
             itinerary = run_result.final_output_as(Itinerary)
