@@ -51,19 +51,15 @@ class Itinerary(BaseModel):
 # -----------------------------------------------------------------------------
 @function_tool
 def choose_options(flights: List[Flight], hotels: List[Hotel]) -> Selection:
-    """Return **only** JSON that matches the Selection schema:
-    {
-      "flight_id": "<id>",
-      "hotel_id": "<id>"
-    }
-    Pick the cheapest flight & hotel unless the user clearly states another preference.
-    Do not include any explanatory text.
+    """Return JSON:
+    {"flight_id": "<id>", "hotel_id": "<id>"}
+    Pick the cheapest flight & hotel (unless user hints otherwise). Output **only** the JSON.
     """
     pass
 
 @function_tool
 def build_itinerary(input: ItineraryInput) -> Itinerary:
-    """LLM task: with chosen IDs + reward points, compute cost / points_used and return JSON itinerary."""
+    """Given chosen IDs + points, compute cost, points_used, and return an Itinerary JSON."""
     pass
 
 # -----------------------------------------------------------------------------
@@ -77,90 +73,80 @@ async def chat(request: Request):
     data = await request.json()
     logger.info("Request: %s", data)
 
-    uid         = data.get("user_id", "default")
-    msg         = data.get("message", "")
-    flights_json = data.get("flights", [])
-    hotels_json  = data.get("hotels",  [])
-    points       = data.get("user_points", 0)
+    uid   = data.get("user_id", "default")
+    msg   = data.get("message", "")
+    flights_raw = data.get("flights", [])
+    hotels_raw  = data.get("hotels",  [])
+    points      = data.get("user_points", 0)
 
-    flights = [Flight(**f) for f in flights_json]
-    hotels  = [Hotel(**h) for h in hotels_json]
+    flights = [Flight(**f) for f in flights_raw]
+    hotels  = [Hotel(**h) for h in hotels_raw]
 
-    # --------------------------- session setup ---------------------------
+    # ---------------- session setup ----------------
     if uid not in sessions:
         sessions[uid] = {
             "selector": Agent(
                 name="Selector",
                 instructions=(
-                    "Your task: select the best flight & hotel IDs. "
-                    "• Respond with **only** JSON that matches the Selection schema."
-                    "• If user asks to view options, list up to 3 cheapest flights or hotels, otherwise output the JSON."
+                    "Pick best flight & hotel IDs (cheapest/default).\n"
+                    "Respond with JSON matching Selection schema only."
                 ),
                 tools=[choose_options],
                 model="gpt-4o-mini",
             ),
             "formatter": Agent(
                 name="Formatter",
-                instructions="Given flight+hotel IDs and points, call build_itinerary and output JSON only.",
+                instructions="Use build_itinerary to return JSON itinerary only.",
                 tools=[build_itinerary],
                 model="gpt-4o-mini",
             ),
-            "history": []  # List[str]
+            "history": []
         }
 
     sel_agent = sessions[uid]["selector"]
     fmt_agent = sessions[uid]["formatter"]
     history   = sessions[uid]["history"]
 
-    # --------------------------- selector step ---------------------------
+    # ------------- selector run -------------
     sel_conv = "\n".join(history + [msg]) if history else msg
     extra_block = (
-        f"FLIGHTS_JSON: {json.dumps(flights_json)}\n"
-        f"HOTELS_JSON:  {json.dumps(hotels_json)}"
+        f"FLIGHTS_JSON: {json.dumps(flights_raw)}\n"
+        f"HOTELS_JSON:  {json.dumps(hotels_raw)}"
     )
     selector_input = "\n".join([sel_conv, extra_block])
-    logger.info("Selector conversation passed to LLM:\n%s", selector_input)
+    logger.info("Selector input→\n%s", selector_input)
 
     sel_result = await Runner.run(sel_agent, selector_input)
-    logger.info("Selector raw output: %s", sel_result.final_output)
+    selector_text = str(sel_result.final_output)
+    logger.info("Selector output: %s", selector_text)
 
-    history.extend([msg, str(sel_result.final_output)])
+    history.extend([msg, selector_text])
 
-            # --- parse selector output → Selection ---
+    # Parse Selection safely
     try:
         selection = sel_result.final_output_as(Selection)
-        if not isinstance(selection, Selection):
-            # Attempt manual JSON parse if the content is still a string
-            selection = Selection(**json.loads(selection)) if isinstance(selection, str) else Selection.model_validate(selection)
     except Exception:
-        logger.warning("Selector output was not a valid Selection. Returning early.")
-        return JSONResponse(content={
-            "message": str(sel_result.final_output),
-            "itinerary": {}
-        })(content={
-            "message": str(sel_result.final_output),
-            "itinerary": {}
-        })
+        try:
+            selection = Selection(**json.loads(selector_text))
+        except Exception:
+            logger.warning("Selector did not return valid Selection JSON.")
+            return JSONResponse({"message": selector_text, "itinerary": {}})
 
-    # --------------------------- formatter step ---------------------------
-    fmt_input = ItineraryInput(
-        flights=flights,
-        hotels=hotels,
-        user_points=points,
-        selection=selection,
-    )
+    # ------------- formatter run -------------
+    fmt_input = ItineraryInput(flights=flights, hotels=hotels, user_points=points, selection=selection)
     fmt_conv = json.dumps(fmt_input.model_dump())
     fmt_result = await Runner.run(fmt_agent, fmt_conv)
-    logger.info("Formatter raw output: %s", fmt_result.final_output)
+    fmt_text = str(fmt_result.final_output)
+    logger.info("Formatter output: %s", fmt_text)
 
     try:
-        itinerary_dict = fmt_result.final_output_as(Itinerary).dict()
+        itinerary = fmt_result.final_output_as(Itinerary).dict()
     except Exception:
-        itinerary_dict = {}
+        itinerary = {}
 
-    return JSONResponse(content={
-        "message": str(fmt_result.final_output),
-        "itinerary": itinerary_dict,
+    return JSONResponse({
+        "message": fmt_text,
+        "itinerary": itinerary
     })
 
 # -----------------------------------------------------------------------------
