@@ -62,14 +62,14 @@ async def chat(request: Request):
         hotels = data.get("hotels", [])
         user_points = data.get("user_points", 0)
 
-        tool_input = {
-            "flights": flights,
-            "hotels": hotels,
-            "user_points": user_points
-        }
+        tool_input = ItineraryInput(
+            flights=flights,
+            hotels=hotels,
+            user_points=user_points
+        )
 
-        logger.info("Running agent with inputs: [%s, %s]", message, tool_input)
-        result = await Runner.run(agent, message, tool_input)
+        logger.info("Running agent with input: %s", tool_input)
+        result = await Runner.run(agent, message)
 
         try:
             itinerary = result.final_output_as(Itinerary)
