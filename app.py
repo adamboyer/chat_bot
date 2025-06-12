@@ -13,6 +13,12 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Define input model for function tool
+class ItineraryInput(BaseModel):
+    flights: list
+    hotels: list
+    user_points: int
+
 # Define output model
 class Itinerary(BaseModel):
     flight: dict
@@ -23,7 +29,7 @@ class Itinerary(BaseModel):
 
 # Define function tool (agent will use this)
 @function_tool
-def recommend_itinerary(input: dict) -> Itinerary:
+def recommend_itinerary(input: ItineraryInput) -> Itinerary:
     """
     Choose the best flight and hotel based on price and user points.
     Return a full itinerary in structured JSON.
