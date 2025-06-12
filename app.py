@@ -90,8 +90,8 @@ async def chat(request: Request):
             return JSONResponse(content=itinerary.dict())
         except Exception as parse_err:
             logger.warning("Failed to parse structured output: %s", parse_err)
-            logger.info("Raw result content: %s", result.output_as_text())
-            return JSONResponse(content={"response": result.output_as_text()})
+            logger.info("Raw result content: %s", str(result))
+            return JSONResponse(content={"response": str(result)})
 
     except Exception as e:
         logger.error("Error handling request: %s", e, exc_info=True)
