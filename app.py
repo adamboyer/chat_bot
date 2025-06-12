@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from agents import Agent, Runner, function_tool
 from pydantic import BaseModel
 import os
+import asyncio
 
 # Load env
 load_dotenv()
@@ -55,8 +56,8 @@ def chat():
                 "user_points": user_points
             })
 
-        # Run the agent using Runner (sync)
-        result = Runner.run(agent, *inputs)
+        # Run the agent using Runner (sync via asyncio)
+        result = asyncio.run(Runner.run(agent, *inputs))
 
         try:
             # Try to parse structured output
