@@ -87,9 +87,7 @@ async def chat(request: Request):
         sessions[uid] = {
             "selector": Agent(
                 name="Selector",
-                instructions=(
-                    "Return ONLY Selection JSON with cheapest/default IDs."
-                ),
+                instructions="Return ONLY Selection JSON with cheapest/default IDs.",
                 tools=[choose_options],
                 model="gpt-4o-mini",
             ),
@@ -124,28 +122,31 @@ async def chat(request: Request):
 
     # ---------------- Parse Selection safely ----------------
     def parse_selection(text: str) -> Optional[Selection]:
+        """Strip markdown fences and json‑parse to Selection"""
         clean = text.strip()
         if clean.startswith("```"):
+            # remove ```json and ``` lines
             clean = "\n".join(
-                line for line in clean.splitlines()
-                if not line.strip().startswith("```") and not line.strip().startswith("json")
+                ln for ln in clean.splitlines()
+                if not ln.strip().startswith("```") and not ln.strip().startswith("json")
             )
         try:
-            return Selection(**json.loads(clean))
+            data = json.loads(clean)
+            return Selection(**data)
         except Exception:
             return None
 
-        # -- attempt direct structured parse --
+    # try structured helper first
     selection: Optional[Selection]
     try:
-        raw_sel = sel_result.final_output_as(Selection)
-        selection = raw_sel if isinstance(raw_sel, Selection) else None
+        tmp = sel_result.final_output_as(Selection)
+        selection = tmp if isinstance(tmp, Selection) else None
     except Exception:
         selection = None
 
-    # -- fallback: strip markdown/code fences & json‑parse --
+    # fallback to text parse
     if not selection:
-        selection = parse_selection(selector_text)(selector_text)
+        selection = parse_selection(selector_text)
 
     if not selection:
         logger.warning("Selector output not valid after cleaning. Sending assistant text only.")
