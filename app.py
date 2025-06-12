@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from openai import OpenAI
-from openai.agents import Runnable, ChatSession
+from agents import Runnable, ChatSession
 from openai.tools import function_tool
 from pydantic import BaseModel
 import os
