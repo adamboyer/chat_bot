@@ -1,54 +1,63 @@
 from flask import Flask, request, jsonify
-from openai import OpenAI, AssistantRunnable, ChatSession
-from openai.tools import function_tool
 from dotenv import load_dotenv
+from openai import OpenAI
+from openai.agents import Runnable, ChatSession
+from openai.tools import function_tool
+from pydantic import BaseModel
 import os
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Tool: Only a function signature and description
+# Define a Pydantic model for structured return
+class Itinerary(BaseModel):
+    flight: dict
+    hotel: dict
+    total_cost: float
+    points_used: int
+    notes: str
+
+# Agent-accessible tool
 @function_tool
-def recommend_itinerary(flights: list, hotels: list, user_points: int) -> dict:
-    """
-    Recommend a travel itinerary using available flights, hotels, and user points.
-    Wait until you have all 3 inputs. Ask the user for missing info if needed.
-    Return a JSON object with fields: flight, hotel, total_cost, points_used, and notes.
-    """
-    pass
+def recommend_itinerary(flights: list, hotels: list, user_points: int) -> Itinerary:
+    """Use this tool to recommend the best itinerary using flights, hotels, and reward points."""
+    pass  # OpenAI will reason and respond
 
-# Agent with planning instructions
-agent = AssistantRunnable.from_tools(
-    tools=[recommend_itinerary],
-    instructions="""
-    You are a travel planning assistant. Collect any missing information from the user
-    (flights, hotels, or user points). Once you have everything, use the tool to create a complete itinerary.
-    Always keep track of what the user has already told you. Speak clearly and respond in a helpful tone.
-    """
-)
+# Create the agent with instructions
+agent = Runnable.tools([recommend_itinerary]).with_instructions("""
+You are a travel planning assistant. Gather all necessary info from the user
+(flights, hotels, user_points). Once all data is available, use the recommend_itinerary tool
+to create a full travel plan. Respond in a helpful, friendly tone.
+""")
 
-# Flask app setup
+# Simple in-memory session store
+user_sessions = {}
+
+# Flask app
 app = Flask(__name__)
-
-# Track simple in-memory session state (use session ID/IP for real apps)
-session_map = {}
 
 @app.route("/chat", methods=["POST"])
 def chat():
     try:
-        user_id = request.remote_addr  # better: use a real session ID
-        data = request.get_json()
+        user_id = request.remote_addr  # for real use, replace with session or token
+        data = request.json
         message = data.get("message")
 
-        if user_id not in session_map:
-            session_map[user_id] = ChatSession(agent)
+        if not message:
+            return jsonify({"error": "Missing 'message' field"}), 400
 
-        session = session_map[user_id]
-        result = session.invoke(message)
-        return jsonify({"response": result.content})
+        # Reuse ChatSession or start new
+        if user_id not in user_sessions:
+            user_sessions[user_id] = ChatSession(agent)
+
+        session = user_sessions[user_id]
+
+        # Invoke the agent with the user's message
+        reply = session.invoke(message)
+
+        return jsonify({"response": reply.content})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Dev server
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
