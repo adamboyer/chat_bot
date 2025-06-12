@@ -115,10 +115,18 @@ async def chat(request: Request):
 
     history.extend([msg, str(sel_result.final_output)])
 
+        # Try to coerce selector output into Selection
     try:
         selection = sel_result.final_output_as(Selection)
+        if not isinstance(selection, Selection):
+            # final_output_as may return raw value; attempt manual parse
+            selection = Selection(**json.loads(selection)) if isinstance(selection, str) else Selection.model_validate(selection)
     except Exception:
-        return JSONResponse(content={"message": str(sel_result.final_output), "itinerary": {}})
+        logger.warning("Selector output was not a valid Selection; returning early")
+        return JSONResponse(content={
+            "message": str(sel_result.final_output),
+            "itinerary": {}
+        }), "itinerary": {}})
 
     # --------------------------- formatter step ---------------------------
     fmt_input = ItineraryInput(
