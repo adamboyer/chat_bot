@@ -19,8 +19,8 @@ class Flight(BaseModel):
     id: str
     departure: str
     arrival: str
-    departure_date: str  # ISO‑8601 like "2025-07-01"
-    arrival_date: str    # ISO‑8601 like "2025-07-01"
+    departure_date: str | None = None  # Optional ISO‑8601
+    arrival_date: str | None = None    # Optional ISO‑8601
     price: float
 
 class Hotel(BaseModel):
@@ -102,7 +102,8 @@ async def chat(request: Request):
 
     try:
         run_result = await Runner.run(agent, history_text)
-        history.extend([user_msg, str(run_result.final_output)])
+        logger.info("Raw run_result.final_output: %s", run_result.final_output)
+        history.extend([user_msg, str(run_result.final_output)])[user_msg, str(run_result.final_output)])
 
         try:
             itinerary = run_result.final_output_as(Itinerary)
