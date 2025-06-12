@@ -2,11 +2,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from agents import Agent, Runner, function_tool
+from agents import Agent, Runner, function_tool, ChatSession
 import logging
 import os
 import uvicorn
-from typing import List
+from typing import List, Dict
 
 # Load env
 load_dotenv()
@@ -50,16 +50,8 @@ def recommend_itinerary(input: ItineraryInput) -> Itinerary:
     """
     pass  # The agent will handle this logic internally
 
-# Build the agent
-agent = Agent(
-    name="Itinerary Assistant",
-    instructions=(
-        "You are a helpful travel planner. Use the `recommend_itinerary` tool when you have enough data "
-        "(flights, hotels, and user points). If something is missing, ask the user. Respond clearly and helpfully."
-    ),
-    tools=[recommend_itinerary],
-    model="gpt-4o-mini"
-)
+# Store chat sessions keyed by user_id
+sessions: Dict[str, ChatSession] = {}
 
 # FastAPI setup
 app = FastAPI()
@@ -70,6 +62,7 @@ async def chat(request: Request):
         data = await request.json()
         logger.info("Received request: %s", data)
 
+        user_id = data.get("user_id", "default")
         message = data.get("message", "")
         flights = data.get("flights", [])
         hotels = data.get("hotels", [])
@@ -81,8 +74,19 @@ async def chat(request: Request):
             user_points=user_points
         )
 
+        if user_id not in sessions:
+            sessions[user_id] = ChatSession(agent=Agent(
+                name="Itinerary Assistant",
+                instructions=(
+                    "You are a helpful travel planner. Use the `recommend_itinerary` tool when you have enough data "
+                    "(flights, hotels, and user points). If something is missing, ask the user. Respond clearly and helpfully."
+                ),
+                tools=[recommend_itinerary],
+                model="gpt-4o-mini"
+            ))
+
         logger.info("Running agent with input: %s", tool_input)
-        result = await Runner.run(agent, message)
+        result = await sessions[user_id].run(message)
 
         try:
             itinerary = result.final_output_as(Itinerary)
