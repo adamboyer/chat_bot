@@ -84,7 +84,7 @@ async def chat(request: Request):
                 tools=[recommend_itinerary],
                 model="gpt-4o-mini"
             )
-            sessions[user_id] = await Runner.create_session(agent)
+            sessions[user_id] = Runner(agent)
 
         logger.info("Running agent with input: %s", tool_input)
         result = await sessions[user_id].run(message)
