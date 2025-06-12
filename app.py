@@ -189,7 +189,15 @@ You receive:
         user_points=points,
         selection=selection,
     )
-    fmt_conv = json.dumps(fmt_input.model_dump())
+    fmt_conv = (
+        f"SELECTION_JSON: {selection.model_dump_json()}
+"
+        f"FLIGHTS_JSON:  {json.dumps(flights_raw)}
+"
+        f"HOTELS_JSON:   {json.dumps(hotels_raw)}
+"
+        f"USER_POINTS:   {points}"
+    )
     fmt_result = await Runner.run(fmt_agent, fmt_conv)
     fmt_text = str(fmt_result.final_output)
     logger.info("Formatter output: %s", fmt_text)
