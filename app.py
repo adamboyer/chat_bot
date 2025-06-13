@@ -45,7 +45,7 @@ AGENT_PROMPT = (
     "If you still need info →\n"
     "{\n  \"message\": \"I still need your departure city…\",\n  \"offer\": {}\n}\n\n"
     "If you have enough info →\n"
-    "{\n  \"message\": \"Here is your offer!\",\n  \"offer\": {\n    \"airline\": \"BudgetAir\",\n    \"flight_number\": \"F123\",\n    \"departure_time\": \"2025‑07‑05T08:00\",\n    \"arrival_time\":   \"2025‑07‑05T16:15\",\n    \"hotel_name\":    \"Happy Stay Inn\",\n    \"total_cost\": 550,\n    \"notes\": \"Includes 3‑night stay\"\n  }\n}"
+    "{\n  \"message\": \"Here is your offer!\",\n  \"offer\": {\n    \"airline\": \"BudgetAir\",\n    \"flight_number\": \"BA123\",\n    \"departure_city\": \"Los Angeles\",\n    \"departure_country\": \"USA\",\n    \"departure_time\": \"2025‑07‑05T08:00\",\n    \"arrival_city\":   \"New York\",\n    \"arrival_country\": \"USA\",\n    \"arrival_time\":   \"2025‑07‑05T16:15\",\n    \"hotel_name\":     \"Happy Stay Inn\",\n    \"hotel_rating\":   4.2,\n    \"total_cost\": 550,\n    \"notes\": \"Includes 3‑night stay; 30,000 points applied.\"\n  }\n}"
 )
 
 # ---------------------------------------------------------------------------
